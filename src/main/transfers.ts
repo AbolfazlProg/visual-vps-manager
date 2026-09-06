@@ -12,8 +12,22 @@ import { createReadStream, createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 import type { TransferState } from "../shared/protocol";
 import { classifyFsError, vpsmError, type SerializedVpsmError } from "../shared/errors";
-import { assertSafeRemotePath, basenameOf, joinRemotePath } from "../shared/paths";
+import { assertSafeRemotePath, basenameOf, dirnameOf, joinRemotePath } from "../shared/paths";
+import { validateEntryName as validateSegment } from "../shared/paths";
 import type { SshSession } from "./ssh";
+
+/** Validate each segment of a relative path (a/b/c) and join under `dir`. */
+function joinRemoteDeep(dir: string, rel: string): string {
+  let cur = dir;
+  for (const seg of rel.split("/")) {
+    if (!seg || seg === "." || seg === "..") {
+      throw vpsmError("EINVAL_PATH", `Invalid path segment in folder: ${rel}`);
+    }
+    validateSegment(seg);
+    cur = cur === "/" ? `/${seg}` : `${cur}/${seg}`;
+  }
+  return cur;
+}
 
 const CHUNK = 64 * 1024;
 
@@ -21,6 +35,8 @@ interface Internal {
   state: TransferState;
   cancelFlag: boolean;
   running: boolean;
+  /** server-side cleanup command executed when the transfer settles (archives) */
+  cleanupCmd?: string;
 }
 
 export interface TransferDeps {
@@ -104,6 +120,10 @@ export class TransferManager {
     const remoteSafe = assertSafeRemotePath(remotePath);
     const session = this.deps.getSession(profileId);
     const st = await session.lstat(remoteSafe).catch((e) => { throw e; });
+    // keep the file extension even if the save dialog dropped it
+    if (!path.extname(localPath) && path.extname(remoteSafe)) {
+      localPath += path.extname(remoteSafe);
+    }
     const id = session.nextId("tr");
     this.items.set(id, {
       state: {
@@ -117,6 +137,133 @@ export class TransferManager {
       },
       cancelFlag: false,
       running: false
+    });
+    this.enqueue(profileId, id);
+    return id;
+  }
+
+  /**
+   * Smart upload: files AND folders. A folder is walked recursively and
+   * uploaded as many parallel file transfers under remoteDir/<folderName>/…
+   * Returns the number of queued file transfers.
+   */
+  async smartUpload(profileId: string, localPaths: string[], remoteDir: string, overwrite: boolean): Promise<number> {
+    let queued = 0;
+    for (const p of localPaths) {
+      const st = await fs.stat(p).catch(() => null);
+      if (!st) throw vpsmError("ENOENT", `Local path not found: ${p}`);
+      if (st.isDirectory()) {
+        queued += await this.folderUpload(profileId, p, remoteDir, overwrite);
+      } else if (st.isFile()) {
+        await this.startUpload(profileId, p, remoteDir, overwrite);
+        queued++;
+      }
+    }
+    return queued;
+  }
+
+  /** Recursive folder upload: one batched mkdir, then parallel file transfers. */
+  private async folderUpload(profileId: string, localDir: string, remoteDir: string, _overwrite: boolean): Promise<number> {
+    const rootName = path.basename(localDir);
+    validateSegment(rootName);
+    const remoteRoot = assertSafeRemotePath(joinRemotePath(assertSafeRemotePath(remoteDir), rootName));
+
+    const files: Array<{ abs: string; rel: string; size: number }> = [];
+    const subDirs: string[] = [];
+    const walk = async (dir: string, rel: string): Promise<void> => {
+      const items = await fs.readdir(dir, { withFileTypes: true });
+      for (const it of items) {
+        const abs = path.join(dir, it.name);
+        const r = rel ? `${rel}/${it.name}` : it.name;
+        if (it.isDirectory()) {
+          subDirs.push(r);
+          await walk(abs, r);
+        } else if (it.isFile()) {
+          const s = await fs.stat(abs);
+          files.push({ abs, rel: r, size: s.size });
+        }
+      }
+    };
+    await walk(localDir, "");
+
+    // one round-trip to create the whole remote tree
+    const session = this.deps.getSession(profileId);
+    const mkdirPaths = [remoteRoot, ...subDirs.map((d) => joinRemoteDeep(remoteRoot, d))];
+    const { cmdMkdirs } = await import("../shared/shell");
+    const mr = await session.exec(cmdMkdirs(mkdirPaths), { timeoutMs: 60000 }).catch((e) => { throw e; });
+    if (mr.code !== 0) {
+      throw vpsmError("EREMOTE", `Cannot create remote folders`, { detail: (mr.stderr || mr.stdout).slice(0, 300) });
+    }
+
+    let count = 0;
+    for (const f of files) {
+      const remotePath = joinRemoteDeep(remoteRoot, f.rel);
+      const id = session.nextId("tr");
+      this.items.set(id, {
+        state: {
+          id, profileId, kind: "upload",
+          remotePath, localPath: f.abs,
+          totalBytes: f.size,
+          transferredBytes: 0,
+          status: "queued",
+          startedAt: Date.now(),
+          speedBps: 0
+        },
+        cancelFlag: false,
+        running: false
+      });
+      this.enqueue(profileId, id);
+      count++;
+    }
+    return count;
+  }
+
+  /**
+   * Folder download: pack the folder server-side (zip when available, tar.gz
+   * otherwise), stream the archive down, then delete the server-side temp.
+   */
+  async startFolderDownload(profileId: string, remotePath: string, localPath: string): Promise<string> {
+    const remoteSafe = assertSafeRemotePath(remotePath);
+    const session = this.deps.getSession(profileId);
+    const parent = dirnameOf(remoteSafe);
+    const base = basenameOf(remoteSafe);
+
+    const which = await session.exec("command -v zip", { timeoutMs: 8000 });
+    const hasZip = which.code === 0 && which.stdout.trim().length > 0;
+
+    const mk = await session.exec("mktemp -d", { timeoutMs: 10000 });
+    if (mk.code !== 0 || !mk.stdout.trim()) {
+      throw vpsmError("EREMOTE", "Cannot create a temporary folder on the server");
+    }
+    const tmp = mk.stdout.trim();
+    const ext = hasZip ? ".zip" : ".tar.gz";
+    const arch = `${tmp}/archive${ext}`;
+    const { shq } = await import("../shared/shell");
+    const cmd = hasZip
+      ? `(cd ${shq(parent)} && zip -r -q ${shq(arch)} ${shq(base)})`
+      : `(cd ${shq(parent)} && tar -czf ${shq(arch)} ${shq(base)})`;
+    const r = await session.exec(cmd, { timeoutMs: 900000 });
+    if (r.code !== 0) {
+      await session.exec(`rm -rf ${shq(tmp)}`, { timeoutMs: 15000 }).catch(() => {});
+      throw vpsmError("EREMOTE", `Packing the folder failed on the server`, { detail: (r.stderr || r.stdout).slice(0, 300) });
+    }
+    const st = await session.lstat(arch);
+    if (!path.extname(localPath)) localPath += ext;
+
+    const id = session.nextId("tr");
+    this.items.set(id, {
+      state: {
+        id, profileId, kind: "download",
+        remotePath: arch, localPath,
+        totalBytes: Number(st.size) || 0,
+        transferredBytes: 0,
+        status: "queued",
+        startedAt: Date.now(),
+        speedBps: 0
+      },
+      cancelFlag: false,
+      running: false,
+      cleanupCmd: `rm -rf ${shq(tmp)}`
     });
     this.enqueue(profileId, id);
     return id;
@@ -265,9 +412,16 @@ export class TransferManager {
         finish("canceled");
       } else {
         finish("done");
+        if (it.cleanupCmd) {
+          // remove server-side temp (archive) — best effort, never blocks the UI
+          void this.deps.getSession(t.profileId).exec(it.cleanupCmd, { timeoutMs: 20000 }).catch(() => {});
+        }
+        // NOTE: local paths are host-native (Windows backslashes) — never run the
+        // POSIX basenameOf() on them (it throws EINVAL_PATH).
+        const localName = path.basename(t.localPath);
         void this.deps.onActivity(t.profileId, t.kind === "upload"
           ? `Uploaded ${basenameOf(t.remotePath)}`
-          : `Downloaded ${basenameOf(t.remotePath)}`, `${t.kind === "upload" ? t.localPath + " → " + t.remotePath : t.remotePath + " → " + t.localPath}`);
+          : `Downloaded ${localName}`, `${t.kind === "upload" ? t.localPath + " → " + t.remotePath : t.remotePath + " → " + t.localPath}`);
       }
     } catch (err) {
       const mapped = err && typeof err === "object" && "code" in err ? (err as SerializedVpsmError) : classifyFsError(err, "transfer");

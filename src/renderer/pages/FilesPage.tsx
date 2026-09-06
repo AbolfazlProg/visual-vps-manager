@@ -8,6 +8,7 @@ import { PermissionsDialog } from "../components/PermissionsDialog";
 import { FileTree } from "../components/FileTree";
 import { ContextMenu, type CtxItem } from "../components/ContextMenu";
 import { EditorOverlay } from "../components/EditorOverlay";
+import { TransferDock } from "../components/TransferDock";
 import { VpsmApiError } from "../ipc";
 import type { SerializedVpsmError } from "../../shared/errors";
 
@@ -270,23 +271,40 @@ export function FilesPage({ profileId }: Props) {
     const picked = await call(window.vpsm.pickLocalFile("open"));
     if (!picked) return;
     const files = picked.split("|").filter(Boolean);
-    for (const f of files) {
-      try {
-        await call(window.vpsm.startUpload(profileId, f, cwd, true));
-      } catch (err) {
-        const e = err as VpsmApiError;
-        toast({ kind: "error", title: "Upload failed", detail: e.sErr?.message });
-      }
+    try {
+      const n = await call(window.vpsm.smartUpload(profileId, files, cwd, true));
+      toast({ kind: "info", title: `${n} upload${n === 1 ? "" : "s"} queued`, detail: "Progress is shown at the bottom-right." });
+    } catch (err) {
+      const e = err as VpsmApiError;
+      toast({ kind: "error", title: "Upload failed", detail: e.sErr?.message });
     }
-    toast({ kind: "info", title: `${files.length} upload(s) started`, detail: "Watch progress in the transfer panel." });
+  };
+
+  const uploadFolderHere = async () => {
+    const dir = await call(window.vpsm.pickFolder());
+    if (!dir) return;
+    try {
+      const n = await call(window.vpsm.smartUpload(profileId, [dir], cwd, true));
+      toast({ kind: "info", title: `Folder upload queued — ${n} file${n === 1 ? "" : "s"}`, detail: "Progress is shown at the bottom-right." });
+    } catch (err) {
+      const e = err as VpsmApiError;
+      toast({ kind: "error", title: "Folder upload failed", detail: e.sErr?.message });
+    }
   };
 
   const downloadEntry = async (entry: FileEntry) => {
-    const target = await call(window.vpsm.pickLocalFile("save", entry.name));
+    const isDir = entry.kind === "directory";
+    const defaultName = isDir ? `${entry.name}.zip` : entry.name;
+    const target = await call(window.vpsm.pickLocalFile("save", defaultName));
     if (!target) return;
     try {
-      await call(window.vpsm.startDownload(profileId, entry.path, target));
-      toast({ kind: "info", title: "Download started" });
+      if (isDir) {
+        await call(window.vpsm.downloadFolder(profileId, entry.path, target));
+        toast({ kind: "info", title: "Packing folder on the server…", detail: "The archive download will appear in the transfer dock." });
+      } else {
+        await call(window.vpsm.startDownload(profileId, entry.path, target));
+        toast({ kind: "info", title: "Download started", detail: "Progress is shown at the bottom-right." });
+      }
     } catch (err) {
       const e = err as VpsmApiError;
       toast({ kind: "error", title: "Download failed", detail: e.sErr?.message });
@@ -346,22 +364,19 @@ export function FilesPage({ profileId }: Props) {
     setDragOver(false);
     const files = e.dataTransfer.files;
     if (files.length === 0) return;
-    // Electron exposes file paths via webUtils.pathForFile in newer versions;
-    // fallback: File.path (still available in Electron 33 renderer)
+    const paths: string[] = [];
     for (let i = 0; i < files.length; i++) {
       const f = files[i] as File & { path?: string };
-      const p = f.path;
-      if (p) {
-        try {
-          await call(window.vpsm.startUpload(profileId, p, cwd, true));
-          toast({ kind: "info", title: `Uploading ${f.name}` });
-        } catch (err) {
-          const e2 = err as VpsmApiError;
-          toast({ kind: "error", title: `Upload failed: ${f.name}`, detail: e2.sErr?.message });
-        }
-      } else {
-        toast({ kind: "warn", title: `Cannot access local path of "${f.name}"`, detail: "Use the Upload button instead." });
-      }
+      if (f.path) paths.push(f.path);
+      else toast({ kind: "warn", title: `Cannot access local path of "${f.name}"`, detail: "Use the Upload button instead." });
+    }
+    if (paths.length === 0) return;
+    try {
+      const n = await call(window.vpsm.smartUpload(profileId, paths, cwd, true));
+      toast({ kind: "info", title: `${n} upload${n === 1 ? "" : "s"} queued`, detail: "Folders are uploaded recursively — watch the dock." });
+    } catch (err) {
+      const e2 = err as VpsmApiError;
+      toast({ kind: "error", title: "Upload failed", detail: e2.sErr?.message });
     }
   };
 
@@ -470,6 +485,7 @@ export function FilesPage({ profileId }: Props) {
         <button className="icon-btn" onClick={() => { setShowHidden((v) => !v); }} aria-label="Toggle hidden files" style={{ color: showHidden ? "var(--accent)" : undefined }}><Eye size={18} /></button>
         <button className="icon-btn" onClick={() => void loadDir(cwd, false)} aria-label="Refresh"><RefreshCw size={18} /></button>
         <button className="btn small primary" onClick={uploadHere}><Upload size={14} /> Upload</button>
+        <button className="btn small" onClick={uploadFolderHere} title="Upload a folder recursively"><Upload size={14} /> 📁</button>
       </div>
 
       <div className="fm-layout">
@@ -643,6 +659,8 @@ export function FilesPage({ profileId }: Props) {
           onSaved={() => void loadDir(cwd, false)}
         />
       )}
+
+      <TransferDock />
 
       {searchOpen && (
         <SearchDialog

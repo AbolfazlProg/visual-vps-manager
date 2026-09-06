@@ -33,12 +33,17 @@ const api = {
   /* transfers */
   startUpload: (id: string, localPath: string, remoteDir: string, overwrite: boolean) =>
     invoke("transfers:upload", id, localPath, remoteDir, overwrite),
+  smartUpload: (id: string, localPaths: string[], remoteDir: string, overwrite: boolean) =>
+    invoke("transfers:smartUpload", id, localPaths, remoteDir, overwrite),
   startDownload: (id: string, remotePath: string, localPath: string) =>
     invoke("transfers:download", id, remotePath, localPath),
+  downloadFolder: (id: string, remotePath: string, localPath: string) =>
+    invoke("transfers:downloadFolder", id, remotePath, localPath),
   listTransfers: (profileId: string) => invoke("transfers:list", profileId),
   cancelTransfer: (transferId: string) => invoke("transfers:cancel", transferId),
   resumeTransfer: (transferId: string) => invoke("transfers:resume", transferId),
   pickLocalFile: (mode: "open" | "save", defaultName?: string) => invoke("dialog:pickFile", mode, defaultName),
+  pickFolder: () => invoke("dialog:pickFolder"),
 
   /* metrics */
   getMetrics: (id: string) => invoke("metrics:get", id),

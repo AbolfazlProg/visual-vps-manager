@@ -1,7 +1,7 @@
 {
   "name": "visual-vps-manager",
   "productName": "Visual VPS Manager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Professional graphical SSH/SFTP manager for Linux VPS servers",
   "author": "Visual VPS Manager",
   "license": "MIT",

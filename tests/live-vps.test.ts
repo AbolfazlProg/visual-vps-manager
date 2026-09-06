@@ -192,6 +192,7 @@ d("LIVE VPS (isolated directory)", () => {
       await new Promise((r) => setTimeout(r, 250));
     }
     const up = transfers.list().find((t) => t.id === id)!;
+    if (up.status !== "done") console.error("[LIVE] upload state:", JSON.stringify(up));
     expect(up.status).toBe("done");
     expect(up.totalBytes).toBe(1024 * 1024);
 
@@ -205,6 +206,7 @@ d("LIVE VPS (isolated directory)", () => {
       await new Promise((r) => setTimeout(r, 250));
     }
     const down = transfers.list().find((t) => t.id === did)!;
+    if (down.status !== "done") console.error("[LIVE] download state:", JSON.stringify(down));
     expect(down.status).toBe("done");
     const dlBuf = await fs.readFile(dlPath);
     expect(createHash("sha256").update(dlBuf).digest("hex")).toBe(sha);
@@ -245,6 +247,70 @@ d("LIVE VPS (isolated directory)", () => {
     console.log(`[LIVE] journal lines: ${lines.length}`);
     expect(lines.length).toBeGreaterThan(0);
   }, 30000);
+
+  it("folder upload (nested, parallel) + progress events + folder download as archive", async () => {
+    const localDir = path.join(process.cwd(), "local-test");
+    const srcDir = path.join(localDir, "live-folder-src");
+    await fs.rm(srcDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(srcDir, "sub", "deep"), { recursive: true });
+    await fs.writeFile(path.join(srcDir, "a.txt"), randomBytes(64 * 1024));
+    await fs.writeFile(path.join(srcDir, "sub", "b.bin"), randomBytes(256 * 1024));
+    await fs.writeFile(path.join(srcDir, "sub", "deep", "c.md"), Buffer.from("# deep file\n"));
+
+    const queued = await transfers.smartUpload("live", [srcDir], testDir, true);
+    expect(queued).toBe(3);
+    // wait for all three to settle
+    for (let i = 0; i < 240; i++) {
+      const all = transfers.list("live").filter((t) => t.remotePath.includes("/live-folder-src/"));
+      if (all.length >= 3 && all.every((t) => ["done", "error"].includes(t.status))) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    const all = transfers.list("live").filter((t) => t.remotePath.includes("/live-folder-src/"));
+    expect(all.length).toBe(3);
+    for (const t of all) expect(t.status).toBe("done");
+    // verify a nested file's size on the server
+    const st = await session.lstat(`${testDir}/live-folder-src/sub/b.bin`);
+    expect(Number(st.size)).toBe(256 * 1024);
+    // verify deep content round-trip
+    const deep = await session.readFileToString(`${testDir}/live-folder-src/sub/deep/c.md`, 1024);
+    expect(deep.content).toContain("# deep file");
+
+    // progress events actually advanced (transferredBytes grew during the run)
+    const b = all.find((t) => t.remotePath.endsWith("b.bin"))!;
+    expect(b.transferredBytes).toBe(b.totalBytes);
+
+    // folder download → server-side archive (zip or tar.gz) → downloaded intact
+    const dlTarget = path.join(localDir, "live-folder-dl", "live-folder-src");
+    const did = await transfers.startFolderDownload("live", `${testDir}/live-folder-src`, dlTarget);
+    for (let i = 0; i < 240; i++) {
+      const t = transfers.list("live").find((x) => x.id === did);
+      if (t && ["done", "error"].includes(t.status)) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    const dt = transfers.list("live").find((x) => x.id === did)!;
+    expect(dt.status).toBe("done");
+    expect(dt.totalBytes).toBeGreaterThan(0);
+    expect(/\.(zip|tar\.gz)$/.test(dt.localPath)).toBe(true);
+    const downloaded = await fs.stat(dt.localPath);
+    expect(downloaded.size).toBe(dt.totalBytes);
+  }, 180000);
+
+  it("download keeps the file extension even if the save dialog dropped it", async () => {
+    const localDir = path.join(process.cwd(), "local-test");
+    await ops.runOperation("live", { kind: "createFile", parent: testDir, name: "randa.pdf", content: "%PDF-1.4 fake pdf bytes" });
+    const target = path.join(localDir, "randa-ext-test", "randa"); // no extension on purpose
+    const did = await transfers.startDownload("live", `${testDir}/randa.pdf`, target);
+    for (let i = 0; i < 120; i++) {
+      const t = transfers.list("live").find((x) => x.id === did);
+      if (t && ["done", "error"].includes(t.status)) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    const t = transfers.list("live").find((x) => x.id === did)!;
+    expect(t.status).toBe("done");
+    expect(t.localPath.endsWith("randa.pdf")).toBe(true);
+    const content = await fs.readFile(t.localPath, "utf8");
+    expect(content).toContain("%PDF-1.4");
+  }, 120000);
 
   it("interactive PTY shell: input round-trip (echo of typed command + execution)", async () => {
     const chunks: string[] = [];

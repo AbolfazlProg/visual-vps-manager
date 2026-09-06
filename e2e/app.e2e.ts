@@ -117,3 +117,12 @@ test("server '⋯' context menu stays inside the viewport (regression)", async (
   // close it again
   await page.keyboard.press("Escape");
 });
+
+test("transfer dock mounts and file icons render (regression)", async () => {
+  // navigate back to the Files view via the server card (bottom nav stays hidden
+  // on the servers page)
+  await page.locator('button[title="File manager"]').click();
+  await expect(page.locator(".fm-toolbar")).toBeVisible({ timeout: 10000 });
+  // file icons render with dedicated format classes
+  await expect(page.locator(".fm-row .ftx").first()).toBeVisible({ timeout: 10000 });
+});

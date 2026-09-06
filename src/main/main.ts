@@ -233,8 +233,12 @@ function registerIpc(): void {
   /* transfers */
   handle("transfers:upload", (id: string, localPath: string, remoteDir: string, overwrite: boolean) =>
     transfers.startUpload(id, localPath, remoteDir, Boolean(overwrite)));
+  handle("transfers:smartUpload", (id: string, localPaths: string[], remoteDir: string, overwrite: boolean) =>
+    transfers.smartUpload(id, Array.isArray(localPaths) ? localPaths : [], remoteDir, Boolean(overwrite)));
   handle("transfers:download", (id: string, remotePath: string, localPath: string) =>
     transfers.startDownload(id, remotePath, localPath));
+  handle("transfers:downloadFolder", (id: string, remotePath: string, localPath: string) =>
+    transfers.startFolderDownload(id, remotePath, localPath));
   handle("transfers:list", (profileId: string) => transfers.list(profileId));
   handle("transfers:cancel", (transferId: string) => transfers.cancel(transferId));
   handle("transfers:resume", (transferId: string) => transfers.resume(transferId));
@@ -248,6 +252,11 @@ function registerIpc(): void {
     }
     const r = await dialog.showSaveDialog(win, { defaultPath: defaultName });
     return r.canceled ? null : r.filePath ?? null;
+  });
+  handle("dialog:pickFolder", async () => {
+    if (!win) return null;
+    const r = await dialog.showOpenDialog(win, { properties: ["openDirectory"] });
+    return r.canceled ? null : r.filePaths[0] ?? null;
   });
 
   /* metrics / services / processes */

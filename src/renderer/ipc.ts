@@ -27,11 +27,14 @@ export interface VpsmBridge {
   readFile(id: string, p: string): Promise<IpcEnvelope<{ content: string; size: number; mtimeMs: number; truncated: boolean }>>;
 
   startUpload(id: string, localPath: string, remoteDir: string, overwrite: boolean): Promise<IpcEnvelope<string>>;
+  smartUpload(id: string, localPaths: string[], remoteDir: string, overwrite: boolean): Promise<IpcEnvelope<number>>;
   startDownload(id: string, remotePath: string, localPath: string): Promise<IpcEnvelope<string>>;
+  downloadFolder(id: string, remotePath: string, localPath: string): Promise<IpcEnvelope<string>>;
   listTransfers(profileId: string): Promise<IpcEnvelope<import("../shared/protocol").TransferState[]>>;
   cancelTransfer(transferId: string): Promise<IpcEnvelope<void>>;
   resumeTransfer(transferId: string): Promise<IpcEnvelope<void>>;
   pickLocalFile(mode: "open" | "save", defaultName?: string): Promise<IpcEnvelope<string | null>>;
+  pickFolder(): Promise<IpcEnvelope<string | null>>;
 
   getMetrics(id: string): Promise<IpcEnvelope<import("../shared/protocol").MetricsSnapshot>>;
 
