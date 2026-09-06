@@ -370,6 +370,14 @@ export class SshSession {
     this.shellChannels.clear();
   }
 
+  /** Write input (keystrokes/commands) to the most recent live shell channel. */
+  writeShell(data: string): boolean {
+    let last: ClientChannel | null = null;
+    for (const ch of this.shellChannels) last = ch;
+    if (!last) return false;
+    try { last.write(data); return true; } catch { return false; }
+  }
+
   /* --------------- user/group name resolution --------------- */
 
   async ensureUserMap(): Promise<void> {

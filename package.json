@@ -7,6 +7,30 @@
   "license": "MIT",
   "private": true,
   "main": "dist/main/main.js",
+  "build": {
+    "appId": "com.visualvpsmanager.app",
+    "productName": "Visual VPS Manager",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "VisualVPSManager-Portable.exe"
+    },
+    "npmRebuild": false,
+    "compression": "maximum"
+  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.json --noEmit",
     "build:main": "tsc -p tsconfig.main.json",

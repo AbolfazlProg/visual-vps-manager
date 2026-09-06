@@ -58,7 +58,8 @@ export class TransferManager {
       throw vpsmError("ENOENT", `Local file not found: ${localPath}`);
     }
     const remoteDirSafe = assertSafeRemotePath(remoteDir);
-    const remotePath = joinRemotePath(remoteDirSafe, basenameOf(localPath));
+    // local paths are host-native (backslashes on Windows) — use platform basename
+    const remotePath = joinRemotePath(remoteDirSafe, path.basename(localPath));
     const session = this.deps.getSession(profileId);
 
     let resumeFrom = 0;

@@ -2,6 +2,7 @@ import { useApp, statusOf } from "../store";
 import { ServerIcon, TerminalIcon, GaugeIcon, FolderTreeIcon, TrashIcon2, ActivityIcon, KeyIcon, SettingsIcon, PlusIcon, dateStr, CopyIcon, EditIcon, MoreIcon } from "../components/icons";
 import { useEffect, useState } from "react";
 import { ServerEditorDialog } from "../components/ServerEditorDialog";
+import { ContextMenu } from "../components/ContextMenu";
 import { call } from "../ipc";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -104,15 +105,20 @@ export function ServersPage() {
       {editorFor && <ServerEditorDialog profileId={editorFor.id} onClose={() => setEditorFor(null)} />}
 
       {menuFor && (
-        <div className="ctx-menu" style={{ left: menuFor.x, top: menuFor.y }} onClick={(e) => e.stopPropagation()}>
-          <button className="ctx-item" onClick={() => { setEditorFor({ id: menuFor.id }); setMenuFor(null); }}><EditIcon size={15} /> Edit</button>
-          <button className="ctx-item" onClick={() => { void duplicateProfile(menuFor.id); setMenuFor(null); }}><CopyIcon size={15} /> Duplicate</button>
-          <div className="ctx-sep" />
-          <button className="ctx-item" onClick={() => { navigate({ view: "trash", profileId: menuFor.id }); setMenuFor(null); }}><TrashIcon2 size={15} /> Trash</button>
-          <button className="ctx-item" onClick={() => { navigate({ view: "activity", profileId: menuFor.id }); setMenuFor(null); }}><ActivityIcon size={15} /> Activity log</button>
-          <div className="ctx-sep" />
-          <button className="ctx-item danger" onClick={() => { setConfirmDelete(menuFor.id); setMenuFor(null); }}>Delete</button>
-        </div>
+        <ContextMenu
+          x={menuFor.x}
+          y={menuFor.y}
+          onClose={() => setMenuFor(null)}
+          items={[
+            { label: "Edit", icon: <EditIcon size={15} />, action: () => setEditorFor({ id: menuFor.id }) },
+            { label: "Duplicate", icon: <CopyIcon size={15} />, action: () => { void duplicateProfile(menuFor.id); } },
+            { sep: true },
+            { label: "Trash", icon: <TrashIcon2 size={15} />, action: () => navigate({ view: "trash", profileId: menuFor.id }) },
+            { label: "Activity log", icon: <ActivityIcon size={15} />, action: () => navigate({ view: "activity", profileId: menuFor.id }) },
+            { sep: true },
+            { label: "Delete", danger: true, action: () => setConfirmDelete(menuFor.id) }
+          ]}
+        />
       )}
 
       {confirmDelete && (

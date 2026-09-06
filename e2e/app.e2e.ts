@@ -95,3 +95,21 @@ test("terminal tab opens a live PTY session", async () => {
   // the fixture shell banner arrives over the real PTY channel
   await expect(page.locator(".term-host")).toContainText("Welcome to fixture shell", { timeout: 20000 });
 });
+
+test("server '⋯' context menu stays inside the viewport (regression)", async () => {
+  await page.getByRole("button", { name: "Servers", exact: true }).click();
+  const more = page.locator('button[title="More"]').last();
+  await more.click();
+  const menu = page.locator(".ctx-menu");
+  await expect(menu).toBeVisible({ timeout: 10000 });
+  const box = await menu.boundingBox();
+  expect(box).not.toBeNull();
+  // Electron windows don't expose an emulated viewport — use the real window size
+  const vp = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(vp.w);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(vp.h);
+  // close it again
+  await page.keyboard.press("Escape");
+});

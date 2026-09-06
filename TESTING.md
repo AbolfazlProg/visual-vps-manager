@@ -74,6 +74,9 @@ The integration fixture (`tests/ssh-fixture.ts`) implements:
 | sudo flow | ✓ | ✓ | ✓ | ✓ (wrong password) | Complete |
 | Activity log | ✓ | ✓ | ✓ | — | Complete |
 | Trash page | ✓ | ✓ | ✓ | ✓ | Complete |
+| Live-VPS scenarios (isolated dir) | — | ✓ | **✓ 11/11 on real Ubuntu 22.04** | ✓ | **Complete** |
+| Server ⋯ menu viewport containment | ✓ | — | ✓ (E2E regression) | ✓ | Complete |
+| Single-file portable EXE | ✓ | — | smoke-launched | — | Complete |
 
 Items marked "live-runbook" transfer through the identical SFTP streaming code
 path validated by the fixture; they additionally appear in the manual live
@@ -82,25 +85,37 @@ is environment-specific.
 
 ## Live VPS runbook (execute when a server is available)
 
-1. Add server (host/port/user/password) → **Test Connection** → Save.
-2. Connect → expect 🟢 and file manager opening at `/`.
-3. Create folder `vpsm-live-test` → create file `hello.txt` → edit in editor →
-   type text → Ctrl+S → reopen → text persisted.
-4. Rename `hello.txt` → `hello2.txt`; duplicate it → `hello2 (copy).txt`.
-5. Upload a >100 MB local file via toolbar → watch progress/speed → Cancel →
-   Resume from the transfer panel.
-6. Download `hello2 (copy).txt` → verify content locally.
-7. Drag a row onto a folder → move; verify via breadcrumb navigation.
-8. Delete → trash → restore from Trash page → verify content.
-9. Permissions dialog: chmod 600 on a file, verify; set owner via sudo.
-10. Monitor: CPU/RAM/disk/net donuts animate; compare with `htop`/`df`.
-11. Services: restart `nginx.service` (or any harmless unit) via sudo; verify
-    `systemctl status` shows active; check logs page streams `journalctl`.
-12. Processes: kill a `sleep 300` started from the terminal.
-13. Error paths: wrong password (EAUTH toast), stop `sshd`-adjacent harmless
-    service without sudo (EACCES_ROOT guidance), disconnect network mid-op
-    (ECONN with retry), edit-while-changed (conflict dialog).
-14. Activity page shows every step; no secrets anywhere.
+**Status: EXECUTED against a real server (Ubuntu 22.04.5 LTS, kernel 5.15) — 11/11 passed.**
+
+The live suite (`tests/live-vps.test.ts`, gated behind `VPSM_LIVE=1` +
+`local-test/live-vps.json`, which is gitignored) runs everything inside a
+dedicated isolated directory `$HOME/.vpsm-live-test` that is wiped before and
+removed after the run — nothing else on the server is touched. No service
+restarts, no kills, no sudo on the live box.
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | Connect (password) + TOFU host-key pin | ✓ |
+| 2 | SFTP readdir of real $HOME with owner/perms | ✓ |
+| 3 | mkdir/create/read/rename/copy/move/duplicate + hostile-name injection safety | ✓ |
+| 4 | chmod 640 via SFTP setstat — real bits verified | ✓ |
+| 5 | delete → trash → restore (undo) → permanent delete | ✓ |
+| 6 | remote find search + du size probe | ✓ |
+| 7 | upload + download 1 MB, SHA256-identical round-trip | ✓ |
+| 8 | metrics snapshot (CPU cores, RAM, disks, Ubuntu/kernel) | ✓ |
+| 9 | services + processes lists (read-only) | ✓ |
+| 10 | journalctl stream | ✓ |
+| 11 | interactive PTY shell executes a marker command | ✓ |
+
+### Bugs the live run caught (all fixed + regression-covered)
+
+1. `df -PB1` is invalid on Ubuntu (P and --output are mutually exclusive) →
+   metrics returned no disks. Fixed to `df -B1 --output=…`.
+2. Uploading a Windows path (`H:\…`) crashed in `basenameOf` (POSIX-only
+   normalization on a host-native path). Fixed to `path.basename`.
+3. SFTP rename/move onto an existing target failed with an opaque "Failure".
+   Now a clear `EEXIST` ("An item named X already exists in …") is surfaced.
+4. Trash metadata always reported size 0. Now records the real byte size.
 
 ## Known issues / notes
 

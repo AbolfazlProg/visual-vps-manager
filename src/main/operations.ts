@@ -357,6 +357,15 @@ export class OperationService {
       return { ok: true, op: { kind: "rename", path, newName }, message: "No change", affected: [path] };
     }
     const s = this.session(profileId);
+    // clear EEXIST: SFTP rename over an existing target fails opaquely
+    const targetExists = await s.lstat(newPath).then(() => true).catch(() => false);
+    if (targetExists) {
+      throw new OperationError(
+        vpsmError("EEXIST", `An item named "${newName}" already exists in ${parent}`, {
+          detail: "Choose a different name."
+        })
+      );
+    }
     try {
       await s.rename(path, newPath);
     } catch (err) {
@@ -388,6 +397,16 @@ export class OperationService {
     const warnings: string[] = [];
     for (const src of sources) {
       const dest = joinRemotePath(destDir, basenameOf(src));
+      // OpenSSH SFTP rename fails with an opaque status when the target exists —
+      // surface a clear, actionable error instead.
+      const destExists = await s.lstat(dest).then(() => true).catch(() => false);
+      if (destExists) {
+        throw new OperationError(
+          vpsmError("EEXIST", `An item named "${basenameOf(src)}" already exists in ${destDir}`, {
+            detail: "Rename the item or remove the existing one, then try again."
+          })
+        );
+      }
       if (isMove) {
         try {
           await s.rename(src, dest);
@@ -452,6 +471,13 @@ export class OperationService {
       for (const p of paths) {
         const id = `${Date.now().toString(36)}-${randToken()}-${basenameOf(p)}`;
         const dest = `${trash}/${id}`;
+        // record real size for the trash UI before the move
+        let itemSize = 0;
+        try {
+          const st = await s.lstat(p);
+          itemSize = Number(st.size) || 0;
+          if (entryKindFromMode(Number(st.mode)) === "directory") itemSize = 0; // dirs: computed on demand
+        } catch { itemSize = 0; }
         try {
           await s.rename(p, dest);
         } catch (err) {
@@ -463,7 +489,7 @@ export class OperationService {
             throwOp(err, `move to trash ${p}`);
           }
         }
-        const meta = JSON.stringify({ origPath: p, deletedAt: Date.now(), size: 0 });
+        const meta = JSON.stringify({ origPath: p, deletedAt: Date.now(), size: itemSize });
         await s.writeStringToFile(`${trash}/${id}.meta.json`, meta).catch(() => {});
         trashIds.push(id);
         affected.push(dest);

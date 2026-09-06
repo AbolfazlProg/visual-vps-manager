@@ -32,7 +32,7 @@ const METRICS_CMD = [
   "echo '---SECT---'",
   "cat /proc/uptime",
   "echo '---SECT---'",
-  "df -PB1 --output=source,fstype,size,used,avail,pcent,target 2>/dev/null | head -60",
+  "df -B1 --output=source,fstype,size,used,avail,pcent,target 2>/dev/null | head -60",
   "echo '---SECT---'",
   "cat /proc/net/dev",
   "echo '---SECT---'",
