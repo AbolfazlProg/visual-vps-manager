@@ -595,26 +595,25 @@ textarea.input { resize: vertical; }
   display: flex; gap: 14px;
 }
 
-/* ---------- bottom nav (mobile-style) ---------- */
+/* ---------- bottom nav (always visible: mobile-first segmented nav) ---------- */
 
 .bottom-nav {
-  display: none;
+  display: flex;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-1);
+  z-index: 50;
 }
 
+.bottom-nav button {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: none; border: none; color: var(--text-dim);
+  padding: 7px 16px 8px; font-size: 10.5px; cursor: pointer;
+}
+.bottom-nav button.active { color: var(--accent); }
+
 @media (max-width: 860px) {
-  .bottom-nav {
-    display: flex;
-    border-top: 1px solid var(--border-soft);
-    background: var(--bg-1);
-    z-index: 50;
-  }
-  .bottom-nav button {
-    flex: 1;
-    display: flex; flex-direction: column; align-items: center; gap: 3px;
-    background: none; border: none; color: var(--text-dim);
-    padding: 7px 0 8px; font-size: 10.5px; cursor: pointer;
-  }
-  .bottom-nav button.active { color: var(--accent); }
+  .bottom-nav button { flex: 1; padding: 7px 0 8px; }
   .fm-sidebar { position: absolute; z-index: 40; inset: 0 auto 0 0; box-shadow: var(--shadow); transform: translateX(-100%); transition: transform 0.18s ease; }
   .fm-sidebar.open { transform: none; }
   .fm-header, .fm-row { grid-template-columns: minmax(140px, 1fr) 70px 90px; }

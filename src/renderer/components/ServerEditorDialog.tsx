@@ -66,6 +66,7 @@ export function ServerEditorDialog({ profileId, onClose }: Props) {
   const saveAndConnect = async () => {
     const id = await submit();
     if (!id) return;
+    onClose(); // surface connection states (host-key dialog, errors) without this modal on top
     const ok = await connect(id);
     if (ok) navigate({ view: "files", profileId: id });
   };

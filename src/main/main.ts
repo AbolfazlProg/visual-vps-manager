@@ -38,6 +38,9 @@ let logService: LogService;
 let terminalService: TerminalService;
 
 function userDataDir(): string {
+  // E2E/tests can isolate their data directory
+  const override = process.env.VPSM_USER_DATA;
+  if (override && override.trim().length > 0) return path.resolve(override);
   return app.getPath("userData");
 }
 

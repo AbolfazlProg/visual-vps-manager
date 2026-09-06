@@ -146,6 +146,10 @@ export async function startSshFixture(options: { simulatedFsRoot?: string } = {}
       client.on("ready", () => {
         client.on("session", (accept) => {
           const session = accept();
+          // accept PTY requests so client shell({ pty }) works
+          session.on("pty", (acceptPty) => {
+            try { acceptPty(); } catch { /* noop */ }
+          });
           session.on("sftp", (acceptSftp) => {
             const sftp: SFTPStream = acceptSftp();
             attachSftp(sftp, rootDir);

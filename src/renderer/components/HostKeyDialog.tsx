@@ -8,8 +8,15 @@ import { ShieldIcon } from "./icons";
  * accept the fingerprint before the registry pins it and retries.
  */
 export function HostKeyDialog() {
-  const { states, connect, disconnect } = useApp();
+  const { states, connect, disconnect, navigate } = useApp();
   const pending = Object.values(states).find((s) => s.status === "hostkey");
+
+  const accept = async () => {
+    if (!pending) return;
+    const id = pending.id;
+    const ok = await connect(id, true);
+    if (ok) navigate({ view: "files", profileId: id });
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -24,7 +31,7 @@ export function HostKeyDialog() {
   const wasKnown = pending.message === "SSH host key changed";
 
   return (
-    <div className="modal-backdrop" role="alertdialog" aria-modal="true" aria-label="SSH host key verification">
+    <div className="modal-backdrop" role="alertdialog" aria-modal="true" aria-label="SSH host key verification" style={{ zIndex: 900 }}>
       <div className="modal">
         <div className="modal-head">
           <ShieldIcon size={20} />
@@ -49,7 +56,7 @@ export function HostKeyDialog() {
         </div>
         <div className="modal-foot">
           <button className="btn" onClick={() => void disconnect(pending.id)}>Reject &amp; Disconnect</button>
-          <button className="btn primary" onClick={() => void connect(pending.id, true)}>
+          <button className="btn primary" onClick={() => void accept()}>
             Accept &amp; Connect
           </button>
         </div>
