@@ -112,22 +112,33 @@ export class OperationService {
       throwOp(err, `list ${dir}`);
     }
     const entries: FileEntry[] = [];
+    // resolve ALL symlinks in one round-trip (large dirs were slow otherwise)
+    const linkPaths = list
+      .filter((f) => entryKindFromMode(Number(f.attrs.mode)) === "symlink")
+      .map((f) => joinRemotePath(dir, f.filename));
+    const linkInfo = await s.batchReadlink(linkPaths).catch(() => new Map<string, { target: string; resolvedKind: "file" | "directory" | "broken" }>());
     for (const f of list) {
       let entry = fileEntryFromStat(f.filename, dir, f.attrs, s.userNameFor(Number(f.attrs.uid) || 0), s.groupNameFor(Number(f.attrs.gid) || 0));
       if (entry.kind === "symlink") {
-        try {
-          entry.target = await s.readlink(entry.path);
+        const info = linkInfo.get(entry.path);
+        if (info) {
+          entry.target = info.target;
+          entry.linkTargetKind = info.resolvedKind;
+        } else {
+          // fallback for servers without readlink/stat (rare)
           try {
-            const targetStat = await s.stat(entry.path);
-            const tk = entryKindFromMode(Number(targetStat.mode));
-            entry.linkTargetKind = tk === "other" ? "file" : tk;
-            if (entry.linkTargetKind !== "symlink") entry.kind = entry.linkTargetKind === "directory" ? "symlink" : "symlink";
+            entry.target = await s.readlink(entry.path);
+            try {
+              const targetStat = await s.stat(entry.path);
+              const tk = entryKindFromMode(Number(targetStat.mode));
+              entry.linkTargetKind = tk === "other" ? "file" : tk;
+            } catch {
+              entry.linkTargetKind = "broken";
+            }
           } catch {
+            entry.target = "";
             entry.linkTargetKind = "broken";
           }
-        } catch {
-          entry.target = "";
-          entry.linkTargetKind = "broken";
         }
       }
       entries.push(entry);

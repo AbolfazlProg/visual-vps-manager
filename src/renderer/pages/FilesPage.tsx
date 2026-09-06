@@ -47,7 +47,26 @@ export function FilesPage({ profileId }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(600);
   const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      setScrollTop(el.scrollTop);
+      setViewportH(el.clientHeight || 600);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro = new ResizeObserver(() => setViewportH(el.clientHeight || 600));
+    ro.observe(el);
+    setViewportH(el.clientHeight || 600);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+    };
+  }, []);
 
   /* ---------- directory loading / navigation ---------- */
 
@@ -151,6 +170,17 @@ export function FilesPage({ profileId }: Props) {
   };
 
   const visible = visibleEntries();
+
+  /* virtualization: fixed 40px rows — only visible rows render (smooth scroll
+   * even in directories with thousands of entries) */
+  const ROW_H = 40;
+  const OVERSCAN = 6;
+  const [padTop, padBottom, sliceStart, sliceEnd] = useMemo(() => {
+    const total = visible.length;
+    const start = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
+    const end = Math.min(total, Math.ceil((scrollTop + viewportH) / ROW_H) + OVERSCAN);
+    return [start * ROW_H, Math.max(0, (total - end) * ROW_H), start, end];
+  }, [visible.length, scrollTop, viewportH]);
 
   /* ---------- selection ---------- */
 
@@ -506,7 +536,8 @@ export function FilesPage({ profileId }: Props) {
               </div>
             )}
 
-            {visible.map((en) => (
+            <div style={{ height: padTop }} />
+            {visible.slice(sliceStart, sliceEnd).map((en) => (
               <div
                 key={en.path}
                 className={`fm-row${selected.has(en.path) ? " selected" : ""}${clipboard?.op === "cut" && clipboard.paths.includes(en.path) ? " cut" : ""}`}
@@ -541,6 +572,7 @@ export function FilesPage({ profileId }: Props) {
                 </button>
               </div>
             ))}
+            <div style={{ height: padBottom }} />
             {dragOver && <div className="fm-drop-overlay">Drop files to upload to {cwd}</div>}
           </div>
 

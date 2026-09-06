@@ -246,23 +246,23 @@ d("LIVE VPS (isolated directory)", () => {
     expect(lines.length).toBeGreaterThan(0);
   }, 30000);
 
-  it("interactive PTY shell echoes commands", async () => {
+  it("interactive PTY shell: input round-trip (echo of typed command + execution)", async () => {
     const chunks: string[] = [];
-    await session.openShell({ cols: 80, rows: 24 }, {
+    const handle = await session.openShell({ cols: 100, rows: 30 }, {
       onData: (d) => chunks.push(d),
       onClose: () => {},
       onError: (m) => chunks.push(`[error] ${m}`)
     });
-    // wait for prompt, then run a marker command through the real PTY
-    await new Promise((r) => setTimeout(r, 1500));
-    const termId = `live-term`;
-    void termId;
-    // write through the shell channel via a fresh openShell write handle
-    session.writeShell("echo VPSM_LIVE_PTY_OK_$((40+2))\n");
-    await new Promise((r) => setTimeout(r, 2500));
-    session.closeAllShells();
+    // let the shell prompt come up, then type through the REAL input path
+    await new Promise((r) => setTimeout(r, 2000));
+    handle.write("echo VPSM_LIVE_PTY_OK_$((40+2))\n");
+    await new Promise((r) => setTimeout(r, 3000));
+    handle.end();
     const joined = chunks.join("");
-    console.log(`[LIVE] pty output contains marker: ${joined.includes("VPSM_LIVE_PTY_OK_42")}`);
-    expect(joined).toContain("VPSM_LIVE_PTY_OK_42");
+    const executed = joined.includes("VPSM_LIVE_PTY_OK_42");
+    const echoed = joined.includes("echo VPSM_LIVE_PTY_OK");
+    console.log(`[LIVE] pty input echoed: ${echoed}, command executed: ${executed}`);
+    expect(echoed).toBe(true);   // keyboard input reaches the server
+    expect(executed).toBe(true); // and the command actually runs
   }, 30000);
 });

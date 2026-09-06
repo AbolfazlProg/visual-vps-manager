@@ -281,9 +281,9 @@ function registerIpc(): void {
   handle("logs:stop", (streamId: string) => logService.stop(streamId));
 
   /* terminal */
-  handle("terminal:open", (id: string, size: { cols: number; rows: number }) => {
+  handle("terminal:open", async (id: string, size: { cols: number; rows: number }) => {
     const session = registry.requireConnected(id);
-    return terminalService.open(session, id, size);
+    return await terminalService.open(session, id, size);
   });
   handle("terminal:input", (termId: string, data: string) => terminalService.write(termId, data));
   handle("terminal:resize", (termId: string, size: { cols: number; rows: number }) => terminalService.resize(termId, size));

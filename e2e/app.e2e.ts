@@ -89,11 +89,15 @@ test("create folder, rename it, delete to trash and restore", async () => {
   await expect(page.locator(".fm-row", { hasText: "e2e-renamed" })).toBeVisible({ timeout: 15000 });
 });
 
-test("terminal tab opens a live PTY session", async () => {
+test("terminal tab opens a live PTY session AND accepts keyboard input", async () => {
   await page.getByRole("button", { name: "Terminal", exact: true }).click();
   await expect(page.locator(".term-host .xterm")).toBeVisible({ timeout: 20000 });
   // the fixture shell banner arrives over the real PTY channel
   await expect(page.locator(".term-host")).toContainText("Welcome to fixture shell", { timeout: 20000 });
+  // type through the REAL input path (xterm onData -> IPC -> SSH channel -> echo)
+  await page.locator(".term-host .xterm").click();
+  await page.keyboard.type("echo E2E_PTY_INPUT_OK");
+  await expect(page.locator(".term-host")).toContainText("E2E_PTY_INPUT_OK", { timeout: 15000 });
 });
 
 test("server '⋯' context menu stays inside the viewport (regression)", async () => {

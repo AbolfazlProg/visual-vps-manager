@@ -15,7 +15,7 @@ import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper, type 
 import { createHash } from "node:crypto";
 import type { ConnStatus, HostKeyInfo, ServerProfile, CredentialMaterial, TerminalSize } from "../shared/protocol";
 import { classifyFsError, vpsmError, type SerializedVpsmError } from "../shared/errors";
-import { SUDO_VERIFY_CMD, cmdChown } from "../shared/shell";
+import { SUDO_VERIFY_CMD, cmdChown, shq } from "../shared/shell";
 import { assertSafeRemotePath } from "../shared/paths";
 
 export type SshEvent =
@@ -35,6 +35,13 @@ export interface ExecResult {
   stderr: string;
   code: number | null;
   signal: string | null;
+}
+
+/** Handle to a live PTY shell channel (returned by openShell). */
+export interface ShellHandle {
+  write(data: string): void;
+  resize(size: TerminalSize): void;
+  end(): void;
 }
 
 export interface StreamHandle {
@@ -340,26 +347,39 @@ export class SshSession {
 
   /* --------------- interactive remote shell (PTY) --------------- */
 
-  /** Open a real remote PTY shell. Callbacks receive raw byte output. */
-  openShell(
+  /** Open a real remote PTY shell. Resolves with a handle for write/resize/end
+   *  once the channel is up; output flows through the callbacks. */
+  async openShell(
     size: TerminalSize,
     handlers: { onData(d: string): void; onClose(reason: string): void; onError(msg: string): void }
-  ): void {
-    if (!this.client) {
+  ): Promise<ShellHandle> {
+    const client = this.client;
+    const noop: ShellHandle = { write: () => {}, resize: () => {}, end: () => {} };
+    if (!client) {
       handlers.onError("Not connected");
-      return;
+      return noop;
     }
-    this.client.shell({ term: "xterm-256color", cols: size.cols, rows: size.rows }, (err, stream) => {
-      if (err) {
-        handlers.onError(err.message);
-        return;
-      }
-      stream.on("data", (d: Buffer) => handlers.onData(d.toString("utf8")));
-      stream.stderr?.on("data", (d: Buffer) => handlers.onData(d.toString("utf8")));
-      stream.on("close", () => handlers.onClose("session closed"));
-      stream.on("error", (e: Error) => handlers.onError(e.message));
-      this.shellChannels.add(stream);
-      (stream as ClientChannel & { __vpsm?: unknown }).__vpsm = true;
+    return await new Promise<ShellHandle>((resolve) => {
+      client.shell({ term: "xterm-256color", cols: size.cols, rows: size.rows }, (err, stream) => {
+        if (err) {
+          handlers.onError(err.message);
+          resolve(noop);
+          return;
+        }
+        stream.on("data", (d: Buffer) => handlers.onData(d.toString("utf8")));
+        stream.stderr?.on("data", (d: Buffer) => handlers.onData(d.toString("utf8")));
+        stream.on("close", () => {
+          this.shellChannels.delete(stream);
+          handlers.onClose("session closed");
+        });
+        stream.on("error", (e: Error) => handlers.onError(e.message));
+        this.shellChannels.add(stream);
+        resolve({
+          write: (data: string) => { try { stream.write(data); } catch { /* noop */ } },
+          resize: (s2: TerminalSize) => { try { stream.setWindow(s2.rows, s2.cols, 0, 0); } catch { /* noop */ } },
+          end: () => { try { stream.end(); } catch { /* noop */ } }
+        });
+      });
     });
   }
 
@@ -503,6 +523,40 @@ export class SshSession {
     return await new Promise<string>((resolve, reject) =>
       sftp.realpath(path, (err, p) => (err ? reject(classifyFsError(err, `realpath ${path}`)) : resolve(p)))
     );
+  }
+
+  /**
+   * Batch-resolve symlinks in ONE round-trip (N sequential SFTP readlink
+   * round-trips made large listings slow on high-latency links).
+   * Returns path → { target, resolvedKind } per requested path.
+   */
+  async batchReadlink(
+    paths: string[]
+  ): Promise<Map<string, { target: string; resolvedKind: "file" | "directory" | "broken" }>> {
+    const out = new Map<string, { target: string; resolvedKind: "file" | "directory" | "broken" }>();
+    if (paths.length === 0) return out;
+    const cmd =
+      "i=0; " +
+      paths
+        .map(
+          (p) =>
+            `printf '%s\\t' "$((i++))"; readlink -f -- ${shq(p)} 2>/dev/null || true; printf '\\t%s\\n' "$(stat -Lc %F -- ${shq(p)} 2>/dev/null || echo none)"`
+        )
+        .join("; ");
+    const r = await this.exec(cmd, { timeoutMs: 15000 }).catch(() => null);
+    if (!r) return out;
+    const lines = r.stdout.split("\n");
+    for (let i = 0; i < paths.length && i < lines.length; i++) {
+      const parts = lines[i].split("\t");
+      if (parts.length < 3) continue;
+      const target = parts[1];
+      const type = parts[2];
+      let resolvedKind: "file" | "directory" | "broken" = "broken";
+      if (type === "directory") resolvedKind = "directory";
+      else if (type === "regular file" || type === "regular empty file") resolvedKind = "file";
+      out.set(paths[i], { target, resolvedKind });
+    }
+    return out;
   }
 
   /* --------------- sudo --------------- */

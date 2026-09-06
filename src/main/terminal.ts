@@ -4,9 +4,8 @@
  * Ctrl+C, resize, and exit codes behave like a real terminal because it IS one.
  */
 
-import type { ClientChannel } from "ssh2";
 import type { TerminalSize } from "../shared/protocol";
-import type { SshSession } from "./ssh";
+import type { SshSession, ShellHandle } from "./ssh";
 
 export interface TerminalHandle {
   id: string;
@@ -17,31 +16,27 @@ export interface TerminalHandle {
 }
 
 export class TerminalService {
-  private terminals = new Map<string, TerminalHandle & { channel: ClientChannel | null }>();
+  private terminals = new Map<string, TerminalHandle & { handle: ShellHandle | null }>();
 
   constructor(
     private readonly onOutput: (termId: string, data: string) => void,
     private readonly onExit: (termId: string, reason: string) => void
   ) {}
 
-  open(session: SshSession, profileId: string, size: TerminalSize): string {
+  async open(session: SshSession, profileId: string, size: TerminalSize): Promise<string> {
     const id = session.nextId("term");
-    const entry: TerminalHandle & { channel: ClientChannel | null } = {
-      id, profileId, channel: null,
-      write: (data) => {
-        try { entry.channel?.write(data); } catch { /* noop */ }
-      },
-      resize: (size2) => {
-        try { entry.channel?.setWindow(size2.rows, size2.cols, 0, 0); } catch { /* noop */ }
-      },
+    const entry: TerminalHandle & { handle: ShellHandle | null } = {
+      id, profileId, handle: null,
+      write: (data) => entry.handle?.write(data),
+      resize: (size2) => entry.handle?.resize(size2),
       close: () => {
-        try { entry.channel?.end(); } catch { /* noop */ }
+        entry.handle?.end();
         this.terminals.delete(id);
       }
     };
     this.terminals.set(id, entry);
 
-    session.openShell(size, {
+    const handle = await session.openShell(size, {
       onData: (d) => this.onOutput(id, d),
       onClose: (reason) => {
         this.terminals.delete(id);
@@ -49,6 +44,7 @@ export class TerminalService {
       },
       onError: (msg) => this.onOutput(id, `\r\n[error] ${msg}\r\n`)
     });
+    entry.handle = handle;
     return id;
   }
 
