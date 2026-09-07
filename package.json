@@ -1,7 +1,7 @@
 {
   "name": "visual-vps-manager",
   "productName": "Visual VPS Manager",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Professional graphical SSH/SFTP manager for Linux VPS servers",
   "author": "Visual VPS Manager",
   "license": "MIT",
@@ -22,8 +22,21 @@
         {
           "target": "portable",
           "arch": ["x64"]
+        },
+        {
+          "target": "nsis",
+          "arch": ["x64"]
         }
-      ]
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "include": "build/installer.nsh",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "deleteAppDataOnUninstall": false
     },
     "portable": {
       "artifactName": "VisualVPSManager-Portable.exe"

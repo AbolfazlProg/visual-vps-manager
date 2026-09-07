@@ -13,6 +13,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { UtilitiesPage } from "./pages/UtilitiesPage";
 import { ToastHost } from "./components/ToastHost";
 import { HostKeyDialog } from "./components/HostKeyDialog";
+import { TransferDock } from "./components/TransferDock";
 import { ServerIcon, FolderTreeIcon, GaugeIcon, TerminalIcon, SettingsIcon, ActivityIcon } from "./components/icons";
 import type { Route } from "./store";
 
@@ -42,6 +43,7 @@ export function App() {
         {route.view === "transfers" && <UtilitiesPage profileId={profileId ?? undefined} />}
       </div>
       <BottomNav route={route} />
+      <TransferDock />
       <ToastHost />
     </div>
   );

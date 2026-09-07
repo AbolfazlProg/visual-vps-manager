@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../store";
 import { call } from "../ipc";
 import { Upload, Download, X, ChevronUp, ChevronDown, AlertTriangle, Check } from "./icons";
@@ -6,10 +6,14 @@ import { fileSizeStr } from "./icons";
 import type { TransferState } from "../../shared/protocol";
 
 const MAX_COLLAPSED = 3;
+/** how long the dock lingers after the last transfer settles (no errors) */
+const AUTO_HIDE_MS = 5000;
 
 export function TransferDock() {
   const { transfers } = useApp();
   const [expanded, setExpanded] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
   const active = useMemo(
     () => transfers.filter((t) => t.status === "running" || t.status === "queued"),
     [transfers]
@@ -18,30 +22,54 @@ export function TransferDock() {
     () => transfers.filter((t) => t.status === "done" || t.status === "error" || t.status === "canceled").slice(0, 8),
     [transfers]
   );
+  const errs = useMemo(() => transfers.filter((t) => t.status === "error").length, [transfers]);
+
+  // a brand-new transfer always re-opens the dock
+  useEffect(() => {
+    if (active.length > 0) setDismissed(false);
+  }, [active.length]);
+
+  // everything finished cleanly → linger briefly, then get out of the way.
+  // errors keep the dock open so the user can read them (close manually).
+  useEffect(() => {
+    if (active.length === 0 && errs === 0 && settled.length > 0) {
+      const t = setTimeout(() => setDismissed(true), AUTO_HIDE_MS);
+      return () => clearTimeout(t);
+    }
+  }, [active.length, errs, settled.length]);
+
+  if (dismissed) return null;
 
   const shown = expanded ? [...active, ...settled] : [...active, ...settled].slice(0, MAX_COLLAPSED);
-  if (shown.length === 0) return null;
-
   const totalActiveBytes = active.reduce((a, t) => a + t.transferredBytes, 0);
   const totalActiveSize = active.reduce((a, t) => a + t.totalBytes, 0);
   const aggPct = totalActiveSize > 0 ? (totalActiveBytes / totalActiveSize) * 100 : active.length > 0 ? 0 : 100;
-  const errs = transfers.filter((t) => t.status === "error").length;
 
   return (
     <div className="transfer-dock" role="region" aria-label="Transfer progress">
-      <button className="td-head" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
-        {active.length > 0 ? <Upload size={15} className="td-spin" /> : errs > 0 ? <AlertTriangle size={15} color="var(--red)" /> : <Check size={15} color="var(--green)" />}
-        <span>
-          {active.length > 0
-            ? `${active.length} active · ${fileSizeStr(totalActiveBytes)} / ${fileSizeStr(totalActiveSize)}`
-            : errs > 0
-              ? `${errs} transfer${errs > 1 ? "s" : ""} failed`
-              : "Transfers completed"}
-        </span>
-        <div className="spacer" />
-        <span className="faint">{Math.round(aggPct)}%</span>
-        {expanded ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
-      </button>
+      <div className="td-head-row">
+        <button className="td-head" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
+          {active.length > 0 ? <Upload size={15} className="td-spin" /> : errs > 0 ? <AlertTriangle size={15} color="var(--red)" /> : <Check size={15} color="var(--green)" />}
+          <span>
+            {active.length > 0
+              ? `${active.length} active · ${fileSizeStr(totalActiveBytes)} / ${fileSizeStr(totalActiveSize)}`
+              : errs > 0
+                ? `${errs} transfer${errs > 1 ? "s" : ""} failed`
+                : "Transfers completed"}
+          </span>
+          <div className="spacer" />
+          <span className="faint">{Math.round(aggPct)}%</span>
+          {expanded ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
+        </button>
+        <button
+          className="icon-btn td-close"
+          onClick={() => setDismissed(true)}
+          aria-label="Close transfer panel"
+          title="Close"
+        >
+          <X size={14} />
+        </button>
+      </div>
       <div className="td-agg"><div className="td-agg-fill" style={{ width: `${aggPct}%` }} /></div>
       <div className="td-list">
         {shown.map((t) => <Row key={t.id} t={t} />)}
@@ -54,10 +82,9 @@ export function TransferDock() {
 }
 
 function Row({ t }: { t: TransferState }) {
-  const { toast } = useApp();
   const pct = t.totalBytes > 0 ? Math.min(100, (t.transferredBytes / t.totalBytes) * 100) : t.status === "done" ? 100 : 0;
   const eta = t.speedBps > 0 && t.status === "running" ? Math.max(0, Math.round((t.totalBytes - t.transferredBytes) / t.speedBps)) : null;
-  const isArchive = t.remotePath.includes("/archive") && (t.localPath.endsWith(".zip") || t.localPath.endsWith(".tar.gz"));
+  const isArchive = t.localPath.endsWith(".zip") || t.localPath.endsWith(".tar.gz");
   const short = isArchive
     ? `📁 ${t.localPath.split(/[\\/]/).pop()} (folder archive)`
     : t.kind === "upload" ? t.remotePath.split("/").pop() : t.localPath.split(/[\\/]/).pop();
@@ -66,7 +93,7 @@ function Row({ t }: { t: TransferState }) {
     try { await call(window.vpsm.cancelTransfer(t.id)); } catch { /* noop */ }
   };
   const retry = async () => {
-    try { await call(window.vpsm.resumeTransfer(t.id)); toast({ kind: "info", title: "Transfer re-queued" }); } catch { /* noop */ }
+    try { await call(window.vpsm.resumeTransfer(t.id)); } catch { /* noop */ }
   };
 
   return (

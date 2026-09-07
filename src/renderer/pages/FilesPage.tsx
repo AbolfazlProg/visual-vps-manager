@@ -8,7 +8,6 @@ import { PermissionsDialog } from "../components/PermissionsDialog";
 import { FileTree } from "../components/FileTree";
 import { ContextMenu, type CtxItem } from "../components/ContextMenu";
 import { EditorOverlay } from "../components/EditorOverlay";
-import { TransferDock } from "../components/TransferDock";
 import { VpsmApiError } from "../ipc";
 import type { SerializedVpsmError } from "../../shared/errors";
 
@@ -659,8 +658,6 @@ export function FilesPage({ profileId }: Props) {
           onSaved={() => void loadDir(cwd, false)}
         />
       )}
-
-      <TransferDock />
 
       {searchOpen && (
         <SearchDialog
