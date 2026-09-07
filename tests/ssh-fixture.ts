@@ -38,6 +38,8 @@ export interface FixtureServer {
   hostKeyFingerprint: string;
   rootDir: string;
   close(): Promise<void>;
+  /** hard-drop all live connections (simulates a network cut) */
+  killConnections(): void;
 }
 
 /** tokenizer: POSIX-style, supports '...' with '\'' escapes (inverse of shq) */
@@ -118,15 +120,15 @@ export async function startSshFixture(options: { simulatedFsRoot?: string } = {}
     throw new Error("Failed to generate host key for fixture");
   }
 
-  const activeConns = new Set<{ end(): void }>();
+  const activeConns = new Set<import("node:net").Socket>();
   const srv = new Server(
     { hostKeys: [hostKeyPem] },
     (client) => {
       // clients legitimately disconnect during KEX (host-key TOFU rejection)
-      activeConns.add(client);
+      client.on("ready", () => activeConns.add((client as unknown as { _sock?: import("node:net").Socket })._sock!));
       client.on("error", () => {});
       client.on("end", () => {});
-      client.on("close", () => activeConns.delete(client));
+      
       client.on("authentication", (ctx) => {
         const okUser = ctx.username === USERNAME;
         if (ctx.method === "password" && okUser && ctx.password === GOOD_PASSWORD) {
@@ -194,10 +196,11 @@ export async function startSshFixture(options: { simulatedFsRoot?: string } = {}
     port,
     hostKeyFingerprint: "",
     rootDir,
+    killConnections: () => {
+      for (const sock of [...activeConns]) { try { sock.destroy(); } catch { /* noop */ } }
+    },
     close: async () => {
-      for (const c of activeConns) {
-        try { c.end(); } catch { /* noop */ }
-      }
+      for (const sock of [...activeConns]) { try { sock.destroy(); } catch { /* noop */ } }
       srv.close(() => {});
       // force-destroy lingering sockets so Node can exit
       await new Promise<void>((resolve) => {

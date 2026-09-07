@@ -14,6 +14,10 @@ export interface SessionEvents {
 
 export class SessionRegistry {
   private sessions = new Map<string, SshSession>();
+  private everConnected = new Set<string>();
+  private intentional = new Set<string>();
+  private reconnectAttempts = new Map<string, number>();
+  private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly profiles: ProfileStore,
@@ -54,6 +58,16 @@ export class SessionRegistry {
     const profile = this.requireProfile(id);
     if (this.sessions.get(id)?.isConnected()) return;
 
+    // tear down any dead previous session so its late close events
+    // don't trigger a spurious reconnect
+    const old = this.sessions.get(id);
+    if (old) {
+      this.intentional.add(id);
+      try { old.cleanup(); } catch { /* noop */ }
+      this.sessions.delete(id);
+      this.intentional.delete(id);
+    }
+
     if (opts.acceptHostKey) {
       // caller saw the fingerprint dialog; pin BEFORE the next handshake
       const pending = this.pendingHostKeys.get(id);
@@ -84,6 +98,9 @@ export class SessionRegistry {
           });
         }
         this.events.onStatus(id, ev.status, ev.message, ev.error);
+        if (ev.status === "offline" || ev.status === "error") {
+          this.scheduleReconnect(id, ev.error);
+        }
       } else if (ev.type === "hostkey") {
         this.pendingHostKeys.set(id, ev.info);
       }
@@ -97,28 +114,71 @@ export class SessionRegistry {
     });
 
     this.sessions.set(id, session);
+    this.everConnected.add(id);
     try {
       await session.connect();
+      this.reconnectAttempts.delete(id);
     } catch (err) {
       const mapped = err && typeof err === "object" && "code" in err ? (err as SerializedVpsmError) : vpsmError("EINTERNAL", String(err));
       this.sessions.delete(id);
       try { session.cleanup(); } catch { /* noop */ }
+      // initial-connect failures with a pinned key that was previously OK also retry
+      this.scheduleReconnect(id, mapped);
       throw mapped;
     }
   }
 
-  private pendingHostKeys = new Map<string, HostKeyInfo>();
+  /**
+   * Auto-reconnect with exponential backoff (2s → 16s, max 5 attempts).
+   * Skipped for host-key failures (user must verify) and auth failures
+   * (credentials won't change by themselves).
+   */
+  private scheduleReconnect(id: string, error?: SerializedVpsmError): void {
+    if (!this.everConnected.has(id)) return;            // never connected by user → don't auto-retry
+    if (this.intentional.has(id)) return;               // explicit disconnect
+    if (this.reconnectTimers.has(id)) return;           // already scheduled
+    if (error?.code === "EHOSTKEY" || error?.code === "EAUTH" || error?.code === "EINVAL_INPUT") return;
+    const attempt = (this.reconnectAttempts.get(id) ?? 0) + 1;
+    if (attempt > 5) {
+      this.reconnectAttempts.delete(id);
+      this.events.onStatus(id, "error", "Auto-reconnect gave up", vpsmError("ECONN", "Could not reconnect automatically", { detail: "Reconnect manually from the Servers page." }));
+      return;
+    }
+    this.reconnectAttempts.set(id, attempt);
+    const delay = Math.min(16000, 2000 * 2 ** (attempt - 1));
+    const profile = this.profiles.get(id);
+    this.events.onStatus(id, "connecting", `Reconnecting (attempt ${attempt}/5)…`);
+    const timer = setTimeout(async () => {
+      this.reconnectTimers.delete(id);
+      if (this.sessions.get(id)?.isConnected()) return;
+      try {
+        await this.connect(id);
+      } catch {
+        // connect() already scheduled the next attempt
+      }
+    }, delay);
+    this.reconnectTimers.set(id, timer);
+    void profile;
+  }
 
+  /** Explicit user disconnect — cancels any pending auto-reconnect. */
   async disconnect(id: string): Promise<void> {
+    const timer = this.reconnectTimers.get(id);
+    if (timer) { clearTimeout(timer); this.reconnectTimers.delete(id); }
+    this.reconnectAttempts.delete(id);
+    this.intentional.add(id);
     const s = this.sessions.get(id);
-    if (!s) return;
+    if (!s) { this.intentional.delete(id); return; }
     const profile = this.profiles.get(id);
     try { s.cleanup(); } catch { /* noop */ }
     this.sessions.delete(id);
+    this.intentional.delete(id);
     if (profile) {
       await this.activity.add(id, { at: Date.now(), kind: "session", summary: `Disconnected from ${profile.name}` });
     }
   }
+
+  private pendingHostKeys = new Map<string, HostKeyInfo>();
 
   async deleteProfile(id: string): Promise<void> {
     const profile = this.profiles.get(id);

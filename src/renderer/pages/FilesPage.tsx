@@ -49,7 +49,9 @@ export function FilesPage({ profileId }: Props) {
   const [dragOver, setDragOver] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(600);
+  const [band, setBand] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const rowEls = useRef<Map<string, { top: number; bottom: number }>>(new Map());
 
   useEffect(() => {
     const el = listRef.current;
@@ -516,6 +518,37 @@ export function FilesPage({ profileId }: Props) {
             className="fm-filelist"
             ref={listRef}
             tabIndex={0}
+            onMouseDown={(e) => {
+              if (e.button !== 0) return;
+              const t = e.target as HTMLElement;
+              if (t.closest(".fm-row") || t.closest(".fm-header") || t.closest("button")) return;
+              // rubber-band multi-select from empty space
+              setSelected(new Set());
+              const box = listRef.current!.getBoundingClientRect();
+              const x0 = e.clientX, y0 = e.clientY;
+              const startY = box.top + 30; // rows start below the sticky header
+              const move = (ev: MouseEvent) => {
+                const x1 = ev.clientX, y1 = ev.clientY;
+                setBand({ x0, y0, x1, y1 });
+                const sel = new Set<string>();
+                rowEls.current.forEach((r, p) => {
+                  const rt = startY + r.top - listRef.current!.scrollTop;
+                  const rb = rt + 40;
+                  const maxY = Math.max(y0, y1);
+                  const minY = Math.min(y0, y1);
+                  if (rb > minY && rt < maxY) sel.add(p);
+                });
+                setSelected(sel);
+              };
+              const up = () => {
+                setBand(null);
+                window.removeEventListener("mousemove", move);
+                window.removeEventListener("mouseup", up);
+              };
+              window.addEventListener("mousemove", move);
+              window.addEventListener("mouseup", up);
+              setBand({ x0, y0, x1: x0, y1: y0 });
+            }}
             onContextMenu={(e) => {
               e.preventDefault();
               setCtxMenu({ x: e.clientX, y: e.clientY, entry: null });
@@ -555,6 +588,13 @@ export function FilesPage({ profileId }: Props) {
             {visible.slice(sliceStart, sliceEnd).map((en) => (
               <div
                 key={en.path}
+                data-path={en.path}
+                ref={(el) => {
+                  if (el) {
+                    const r = el.getBoundingClientRect();
+                    rowEls.current.set(en.path, { top: r.top, bottom: r.bottom });
+                  } else rowEls.current.delete(en.path);
+                }}
                 className={`fm-row${selected.has(en.path) ? " selected" : ""}${clipboard?.op === "cut" && clipboard.paths.includes(en.path) ? " cut" : ""}`}
                 onClick={(e) => toggleSelect(en, e.ctrlKey || e.metaKey)}
                 onDoubleClick={() => openEntry(en)}
@@ -588,6 +628,17 @@ export function FilesPage({ profileId }: Props) {
               </div>
             ))}
             <div style={{ height: padBottom }} />
+            {band && (
+              <div
+                className="rubber-band"
+                style={{
+                  left: Math.min(band.x0, band.x1),
+                  top: Math.min(band.y0, band.y1),
+                  width: Math.abs(band.x1 - band.x0),
+                  height: Math.abs(band.y1 - band.y0)
+                }}
+              />
+            )}
             {dragOver && <div className="fm-drop-overlay">Drop files to upload to {cwd}</div>}
           </div>
 

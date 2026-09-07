@@ -63,7 +63,7 @@ export function DashboardPage({ profileId }: { profileId: string }) {
         </div>
 
         {!snap ? (
-          <div className="center-note"><span className="spinner" /> collecting metrics…</div>
+          <div className="center-note"><span className="spinner" /> collecting metrics...</div>
         ) : (
           <>
             <div className="dash-grid" style={{ marginBottom: 14 }}>
@@ -83,9 +83,9 @@ export function DashboardPage({ profileId }: { profileId: string }) {
                 ]}
                 spark={history.mem}
               />
-              <DonutCard icon={<HardDrive size={17} />} title={snap.disks[0] ? `Disk — ${snap.disks[0].mount}` : "Disk"}
+              <DonutCard icon={<HardDrive size={17} />} title="Disk"
                 percent={snap.disks[0]?.percent ?? 0}
-                rows={snap.disks.slice(0, 3).map((d) => [d.mount, `${fileSizeStr(d.usedBytes)} / ${fileSizeStr(d.totalBytes)}`] as [string, string])}
+                rows={snap.disks.slice(0, 3).map((d) => [`${d.mount} (${d.filesystem})`, `${fileSizeStr(d.usedBytes)} / ${fileSizeStr(d.totalBytes)}`] as [string, string])}
               />
               <div className="donut-card">
                 <div className="row"><Wifi size={17} /><strong>Network</strong></div>
@@ -113,9 +113,9 @@ export function DashboardPage({ profileId }: { profileId: string }) {
             <div className="card">
               <div className="section-title">Power</div>
               <div className="row">
-                <button className="btn danger" onClick={() => setConfirmPower("reboot")}><Power size={15} /> Reboot server…</button>
-                <button className="btn danger" onClick={() => setConfirmPower("shutdown")}>Shut down…</button>
-                <span className="faint">Requires sudo — both operations ask for confirmation.</span>
+                <button className="btn danger" onClick={() => setConfirmPower("reboot")}><Power size={15} /> Reboot server...</button>
+                <button className="btn danger" onClick={() => setConfirmPower("shutdown")}>Shut down...</button>
+                <span className="faint">Requires sudo - both operations ask for confirmation.</span>
               </div>
             </div>
           </>

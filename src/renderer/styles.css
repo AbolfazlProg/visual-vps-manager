@@ -448,6 +448,14 @@ textarea.input { resize: vertical; }
   color: var(--accent); font-weight: 600;
 }
 
+.rubber-band {
+  position: fixed;
+  border: 1px solid var(--accent);
+  background: rgba(79, 140, 255, 0.16);
+  pointer-events: none;
+  z-index: 95;
+}
+
 .selection-bar {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 12px;

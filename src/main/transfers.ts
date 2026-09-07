@@ -37,6 +37,8 @@ interface Internal {
   running: boolean;
   /** server-side cleanup command executed when the transfer settles (archives) */
   cleanupCmd?: string;
+  /** last emit timestamp for IPC throttling */
+  lastEmit?: number;
 }
 
 export interface TransferDeps {
@@ -56,9 +58,15 @@ export class TransferManager {
     return profileId ? arr.filter((t) => t.profileId === profileId) : arr;
   }
 
-  private emit(id: string): void {
+  private emit(id: string, force = false): void {
     const it = this.items.get(id);
-    if (it) this.deps.onUpdate({ ...it.state });
+    if (!it) return;
+    // throttle: at most one IPC push per transfer per 300ms (progress streams
+    // used to re-render the whole app ~16x/sec — the "fan spin" bug)
+    const now = Date.now();
+    if (!force && now - (it.lastEmit ?? 0) < 300) return;
+    it.lastEmit = now;
+    this.deps.onUpdate({ ...it.state });
   }
 
   private patch(id: string, patch: Partial<TransferState>): void {
@@ -340,6 +348,7 @@ export class TransferManager {
       const finish = (status: TransferState["status"], error?: SerializedVpsmError) => {
         clearInterval(sampler);
         this.patch(id, { status, endedAt: Date.now(), ...(error ? { error } : {}) });
+        this.emit(id, true); // final state always pushed immediately
       };
 
       if (t.kind === "upload") {
