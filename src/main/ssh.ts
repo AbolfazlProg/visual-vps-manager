@@ -17,6 +17,7 @@ import type { ConnStatus, HostKeyInfo, ServerProfile, CredentialMaterial, Termin
 import { classifyFsError, vpsmError, type SerializedVpsmError } from "../shared/errors";
 import { SUDO_VERIFY_CMD, cmdChown, shq } from "../shared/shell";
 import { assertSafeRemotePath } from "../shared/paths";
+import { decodeText, encodeText, type TextEncoding } from "../shared/encoding";
 
 export type SshEvent =
   | { type: "status"; status: ConnStatus; message?: string; error?: SerializedVpsmError }
@@ -445,34 +446,48 @@ export class SshSession {
     );
   }
 
-  async readFileToString(path: string, maxBytes: number): Promise<{ content: string; size: number; mtimeMs: number; truncated: boolean }> {
+  async readFileToString(
+    path: string,
+    maxBytes: number
+  ): Promise<{ content: string; size: number; mtimeMs: number; truncated: boolean; encoding: TextEncoding }> {
     const sftp = await this.sftp();
     const st = await this.lstat(path).catch(() => null);
     const size = st ? Number(st.size) : 0;
     const capped = Math.min(size, maxBytes);
-    return await new Promise((resolve, reject) => {
+    const result = await new Promise<Buffer>((resolve, reject) => {
       const chunks: Buffer[] = [];
       const rs = sftp.createReadStream(path, { start: 0, end: Math.max(0, capped - 1) });
       rs.on("data", (d: Buffer) => chunks.push(d));
-      rs.on("error", (e: Error) => reject(classifyFsError(e, `read ${path}`)));
-      rs.on("end", () => {
-        const buf = Buffer.concat(chunks);
-        const truncated = size > maxBytes;
-        // strip trailing partial UTF-8 char
-        let text = buf.toString("utf8");
-        if (Buffer.byteLength(text, "utf8") > buf.length) text = buf.toString("utf8", 0, buf.length);
-        resolve({ content: text, size, mtimeMs: st ? Number(st.mtime) * 1000 : 0, truncated });
-      });
+      rs.on("error", (e: Error) => reject(classifyFsError(e, `read ${path}`, sftpStatusOf(e))));
+      rs.on("end", () => resolve(Buffer.concat(chunks)));
     });
+    const truncated = size > maxBytes;
+    let decoded: { content: string; encoding: TextEncoding };
+    try {
+      decoded = decodeText(result, truncated);
+    } catch (e) {
+      if ((e as Error).message === "BINARY") {
+        throw vpsmError("EBINARY", `Binary file: ${path}`, { detail: "This file can't be opened in the text editor. Download it instead." });
+      }
+      throw e;
+    }
+    return {
+      content: decoded.content,
+      size,
+      mtimeMs: st ? Number(st.mtime) * 1000 : 0,
+      truncated,
+      encoding: decoded.encoding
+    };
   }
 
-  async writeStringToFile(path: string, content: string): Promise<void> {
+  async writeStringToFile(path: string, content: string, encoding: TextEncoding = "utf8"): Promise<void> {
     const sftp = await this.sftp();
+    const payload = encodeText(content, encoding);
     await new Promise<void>((resolve, reject) => {
       const ws = sftp.createWriteStream(path, { flags: "w" });
-      ws.on("error", (e: Error) => reject(classifyFsError(e, `write ${path}`)));
+      ws.on("error", (e: Error) => reject(classifyFsError(e, `write ${path}`, sftpStatusOf(e))));
       ws.on("close", () => resolve());
-      ws.end(Buffer.from(content, "utf8"));
+      ws.end(payload);
     });
   }
 

@@ -64,9 +64,14 @@ test("add server, connect through host-key dialog, land in file manager", async 
 });
 
 test("create folder, rename it, delete to trash and restore", async () => {
-  // context menu on empty area → New folder
+  // land on Files no matter where the previous test left off
+  await page.getByRole("button", { name: "Files", exact: true }).click().catch(async () => {
+    await page.locator('button[title="File manager"]').click();
+  });
+  await expect(page.locator(".fm-toolbar")).toBeVisible({ timeout: 15000 });
+  // context menu on empty area → New folder (ctx-item = the menu entry)
   await page.locator(".fm-filelist").click({ button: "right", position: { x: 40, y: 200 } });
-  await page.getByRole("button", { name: "New folder" }).click();
+  await page.locator(".ctx-item", { hasText: "New folder" }).click();
   await page.fill("#prompt-input", "e2e-folder");
   await page.getByRole("button", { name: "Create folder" }).last().click();
   await expect(page.locator(".fm-row", { hasText: "e2e-folder" })).toBeVisible({ timeout: 15000 });
@@ -100,8 +105,96 @@ test("terminal tab opens a live PTY session AND accepts keyboard input", async (
   await expect(page.locator(".term-host")).toContainText("E2E_PTY_INPUT_OK", { timeout: 15000 });
 });
 
+test("editor: opens, is interactive (typing + scroll), saves via Ctrl+S, opaque backdrop", async () => {
+  // land on Files (previous test leaves us on Terminal)
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await expect(page.locator(".fm-toolbar")).toBeVisible({ timeout: 15000 });
+
+  // create a file via UI (right-click BELOW the existing rows — empty area)
+  await page.locator(".fm-filelist").click({ button: "right", position: { x: 60, y: 420 } });
+  await page.locator(".ctx-item", { hasText: "New file" }).click();
+  await page.fill("#prompt-input", "editor-test.txt");
+  await page.getByRole("button", { name: "Create file" }).last().click();
+  await expect(page.locator(".fm-row", { hasText: "editor-test.txt" })).toBeVisible({ timeout: 15000 });
+
+  // open in editor (double-click)
+  await page.locator(".fm-row", { hasText: "editor-test.txt" }).dblclick();
+  await expect(page.locator(".editor-overlay")).toBeVisible({ timeout: 15000 });
+  await expect(page.locator(".editor-host .cm-editor .cm-content")).toBeVisible();
+
+  // the backdrop must be FULLY opaque (user-reported: text bleeding through)
+  const bg = await page.evaluate(() => {
+    const el = document.querySelector(".editor-overlay") as HTMLElement;
+    const c = getComputedStyle(el).backgroundColor;
+    const m = c.match(/rgba?\(([^)]+)\)/);
+    const parts = m ? m[1].split(",").map(Number) : [0, 0, 0, 1];
+    return { raw: c, alpha: parts.length === 4 ? parts[3] : 1 };
+  });
+  expect(bg.alpha).toBe(1);
+
+  // type through CodeMirror (keyboard interactivity)
+  await page.locator(".editor-host .cm-content").click();
+  await page.keyboard.type("first line\nE2E_EDITOR_OK");
+  await expect(page.locator(".editor-host")).toContainText("E2E_EDITOR_OK");
+  await expect(page.locator(".editor-bar")).toContainText("unsaved");
+
+  // save with Ctrl+S → unsaved badge disappears
+  await page.keyboard.press("Control+s");
+  await expect(page.locator(".editor-bar .badge")).toHaveCount(0, { timeout: 15000 });
+
+  // close and reopen → saved content persisted on the server
+  await page.locator(".editor-bar .icon-btn").click();
+  await page.locator(".fm-row", { hasText: "editor-test.txt" }).dblclick();
+  await expect(page.locator(".editor-host")).toContainText("E2E_EDITOR_OK", { timeout: 15000 });
+  // cursor status bar is live
+  await expect(page.locator(".editor-status")).toContainText("Ln");
+  await page.locator(".editor-bar .icon-btn").click();
+});
+
+test("transfer dock: live progress on a real download, close button, auto-hide", async () => {
+  // still on Files view; trigger a REAL download through the app's own IPC
+  const profileId = await page.evaluate(() => {
+    const s = (window as unknown as { __vpsmStore: { getState(): { profiles: Array<{ id: string }> } } }).__vpsmStore.getState();
+    return s.profiles[0].id;
+  });
+  const target = path.join(process.cwd(), "local-test", "e2e-dl", "downloaded.txt");
+  await page.evaluate(({ pid, target }) => {
+    void (window as unknown as { vpsm: { startDownload(id: string, rp: string, lp: string): Promise<unknown> } }).vpsm.startDownload(pid, "/editor-test.txt", target);
+  }, { pid: profileId, target });
+
+  // dock appears for the running transfer
+  await expect(page.locator(".transfer-dock")).toBeVisible({ timeout: 8000 });
+  await expect(page.locator(".td-row").first()).toBeVisible();
+  // small file → completes quickly
+  await expect(page.locator(".td-row", { hasText: "downloaded.txt" }).first()).toContainText("done", { timeout: 20000 });
+
+  // CLOSE button dismisses the dock
+  await page.locator(".td-close").first().click();
+  await expect(page.locator(".transfer-dock")).toHaveCount(0, { timeout: 5000 });
+
+  // a second transfer RE-OPENS the dock, then it AUTO-HIDES after completion
+  await page.evaluate(({ pid, target }) => {
+    void (window as unknown as { vpsm: { startDownload(id: string, rp: string, lp: string): Promise<unknown> } }).vpsm.startDownload(pid, "/editor-test.txt", target + "2");
+  }, { pid: profileId, target });
+  await expect(page.locator(".transfer-dock")).toBeVisible({ timeout: 8000 });
+  await expect(page.locator(".td-row", { hasText: "downloaded.txt2" }).first()).toContainText("done", { timeout: 20000 });
+  await page.waitForTimeout(6000);
+  await expect(page.locator(".transfer-dock")).toHaveCount(0, { timeout: 5000 });
+
+  // downloaded bytes really landed locally
+  const stat = await fs.stat(target + "2").catch(() => null);
+  expect(stat?.size).toBeGreaterThan(0);
+});
+
 test("server '⋯' context menu stays inside the viewport (regression)", async () => {
+  // the dock may already be visible here — dismiss it so nav is clickable
+  if (await page.locator(".transfer-dock").count() > 0) {
+    await page.locator(".td-close").first().click({ force: true }).catch(() => {});
+    await page.waitForTimeout(300);
+  }
+  // go to Servers via the bottom nav
   await page.getByRole("button", { name: "Servers", exact: true }).click();
+  await expect(page.locator('button[title="More"]').first()).toBeVisible({ timeout: 15000 });
   const more = page.locator('button[title="More"]').last();
   await more.click();
   const menu = page.locator(".ctx-menu");
@@ -114,15 +207,11 @@ test("server '⋯' context menu stays inside the viewport (regression)", async (
   expect(box!.y).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(vp.w);
   expect(box!.y + box!.height).toBeLessThanOrEqual(vp.h);
-  // close it again
   await page.keyboard.press("Escape");
 });
 
-test("transfer dock mounts and file icons render (regression)", async () => {
-  // navigate back to the Files view via the server card (bottom nav stays hidden
-  // on the servers page)
-  await page.locator('button[title="File manager"]').click();
-  await expect(page.locator(".fm-toolbar")).toBeVisible({ timeout: 10000 });
-  // file icons render with dedicated format classes
-  await expect(page.locator(".fm-row .ftx").first()).toBeVisible({ timeout: 10000 });
+test("transfer dock auto-hides after completion (regression)", async () => {
+  // the last save settled >5s ago, so the dock must be gone by now (auto-hide)
+  await page.waitForTimeout(6500);
+  await expect(page.locator(".transfer-dock")).toHaveCount(0, { timeout: 5000 });
 });

@@ -10,6 +10,15 @@ export interface CtxItem {
   sep?: boolean;
 }
 
+/**
+ * Context menu with correct open/close semantics:
+ * - closes on ANY mousedown OUTSIDE the menu (the robust pattern)
+ * - closes on Escape
+ * - NEVER listens for click (a click fires right after contextmenu on some
+ *   platforms and would instantly close the menu — the bug where the menu
+ *   "flashed" and never opened)
+ * - clamps itself inside the viewport (regression-tested)
+ */
 export function ContextMenu({ x, y, items, onClose }: {
   x: number; y: number;
   items: CtxItem[];
@@ -23,24 +32,33 @@ export function ContextMenu({ x, y, items, onClose }: {
     if (el) {
       const r = el.getBoundingClientRect();
       setPos({
-        x: Math.min(x, window.innerWidth - r.width - 8),
-        y: Math.min(y, window.innerHeight - r.height - 8)
+        x: Math.max(4, Math.min(x, window.innerWidth - r.width - 8)),
+        y: Math.max(4, Math.min(y, window.innerHeight - r.height - 8))
       });
     }
-    const close = () => onClose();
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("click", close);
-    window.addEventListener("contextmenu", close);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("contextmenu", close);
-      window.removeEventListener("keydown", onKey);
+  }, [x, y]);
+
+  useEffect(() => {
+    const onPointerDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     };
-  }, [onClose, x, y]);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    const onBlur = () => onClose();
+    // mousedown, not click — works for left and right buttons alike
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [onClose]);
 
   return (
-    <div className="ctx-menu" ref={ref} style={{ left: pos.x, top: pos.y }} onClick={(e) => e.stopPropagation()}>
+    <div className="ctx-menu" ref={ref} style={{ left: pos.x, top: pos.y }}>
       {items.map((it, i) =>
         it.sep ? (
           <div key={i} className="ctx-sep" />

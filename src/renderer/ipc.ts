@@ -24,7 +24,7 @@ export interface VpsmBridge {
   runOperation(id: string, op: import("../shared/protocol").FileOperation): Promise<IpcEnvelope<import("../shared/protocol").OperationResult>>;
   sizeOf(id: string, paths: string[]): Promise<IpcEnvelope<{ bytes: number; files: number }>>;
   search(id: string, baseDir: string, query: string, opts: { maxDepth: number; maxResults: number }): Promise<IpcEnvelope<import("../shared/protocol").SearchResult[]>>;
-  readFile(id: string, p: string): Promise<IpcEnvelope<{ content: string; size: number; mtimeMs: number; truncated: boolean }>>;
+  readFile(id: string, p: string): Promise<IpcEnvelope<{ content: string; size: number; mtimeMs: number; truncated: boolean; encoding?: string }>>;
 
   startUpload(id: string, localPath: string, remoteDir: string, overwrite: boolean): Promise<IpcEnvelope<string>>;
   smartUpload(id: string, localPaths: string[], remoteDir: string, overwrite: boolean): Promise<IpcEnvelope<number>>;
@@ -90,6 +90,7 @@ export async function call<T>(p: Promise<IpcEnvelope<T>>): Promise<T> {
 export const USER_FACING_MESSAGES: Record<VpsmErrorCode, string> = {
   EINVAL_PATH: "Invalid path or name.",
   EINVAL_INPUT: "Invalid input.",
+  EBINARY: "This is a binary file — it can't be opened in the text editor. Use Download instead.",
   EPERM: "You don't have permission to do this. Try connecting with an account that has sufficient permissions.",
   EACCES_ROOT: "This action needs administrator (root) privileges on the server.",
   ENOENT: "The file or folder no longer exists on the server.",

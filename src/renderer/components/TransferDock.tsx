@@ -41,6 +41,8 @@ export function TransferDock() {
   if (dismissed) return null;
 
   const shown = expanded ? [...active, ...settled] : [...active, ...settled].slice(0, MAX_COLLAPSED);
+  // nothing to show (no transfers at all) → stay hidden
+  if (shown.length === 0) return null;
   const totalActiveBytes = active.reduce((a, t) => a + t.transferredBytes, 0);
   const totalActiveSize = active.reduce((a, t) => a + t.totalBytes, 0);
   const aggPct = totalActiveSize > 0 ? (totalActiveBytes / totalActiveSize) * 100 : active.length > 0 ? 0 : 100;

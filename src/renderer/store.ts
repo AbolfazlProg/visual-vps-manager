@@ -222,6 +222,11 @@ function parseHostKeyDetail(detail?: string): { fingerprint: string; keyType: st
   }
 }
 
+// exposed for E2E debugging / advanced diagnostics (AFTER store creation)
+if (typeof window !== "undefined") {
+  (window as unknown as { __vpsmStore: unknown }).__vpsmStore = useApp;
+}
+
 /* selector helpers */
 export const statusOf = (s: AppState, id: string): ConnStatus => s.states[id]?.status ?? "offline";
 export const activityEntriesOf = (_id: string): Promise<ActivityEntry[]> => call(window.vpsm.listActivity(_id));

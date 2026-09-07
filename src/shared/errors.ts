@@ -6,6 +6,7 @@
 export const VPSM_ERROR_CODES = [
   "EINVAL_PATH", // unsafe/invalid path or name
   "EINVAL_INPUT", // generic invalid input
+  "EBINARY", // file is binary — cannot be opened in the text editor
   "EPERM", // permission denied on remote
   "EACCES_ROOT", // operation needs elevated privileges
   "ENOENT", // remote entry not found

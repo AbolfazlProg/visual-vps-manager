@@ -300,7 +300,7 @@ export class OperationService {
         return { ok: true, op, message: "Read", affected: [path], warnings: res.truncated ? ["File is larger than the editor limit — content is truncated."] : [] };
       }
       case "writeFile":
-        return await this.opWriteFile(profileId, op.path, op.content, op.expectedMtime);
+        return await this.opWriteFile(profileId, op.path, op.content, op.expectedMtime, op.encoding);
       case "stat": {
         await this.stat(profileId, op.path);
         return { ok: true, op, message: "Read", affected: [op.path] };
@@ -650,7 +650,7 @@ export class OperationService {
     return { ok: true, op, message: `Owner set to ${op.owner}${op.group ? ":" + op.group : ""}`, affected: [path] };
   }
 
-  private async opWriteFile(profileId: string, pathRaw: string, content: string, expectedMtime?: number): Promise<OperationResult> {
+  private async opWriteFile(profileId: string, pathRaw: string, content: string, expectedMtime?: number, encoding?: import("../shared/encoding").TextEncoding): Promise<OperationResult> {
     const path = assertSafeRemotePath(pathRaw);
     const s = this.session(profileId);
     // conflict detection
@@ -678,7 +678,7 @@ export class OperationService {
       priorMode = null;
     }
     const tmp = `${path}.vpsmgr-tmp-${randToken()}`;
-    await s.writeStringToFile(tmp, content).catch((e) => throwOp(e, `write ${tmp}`));
+    await s.writeStringToFile(tmp, content, encoding ?? "utf8").catch((e) => throwOp(e, `write ${tmp}`));
     try {
       await s.unlink(path).catch(() => {});
       await s.rename(tmp, path);

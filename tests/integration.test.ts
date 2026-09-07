@@ -232,6 +232,30 @@ describe("OperationService (real SFTP + escaped shell)", () => {
     }
   });
 
+  it("editor encoding round-trip: BOM, CRLF, UTF-16 (no more mojibake)", async () => {
+    // UTF-8 BOM: write with BOM, read back — encoding detected, BOM restored
+    await ops.runOperation("x", { kind: "writeFile", path: "/site/bom.txt", content: "سلام bom", encoding: "utf8-bom" });
+    const r1 = await session.readFileToString("/site/bom.txt", 1024);
+    expect(r1.encoding).toBe("utf8-bom");
+    expect(r1.content).toBe("سلام bom");
+    // re-save keeps the BOM
+    await ops.runOperation("x", { kind: "writeFile", path: "/site/bom.txt", content: r1.content + "!", encoding: r1.encoding });
+    const raw = await session.readFileToString("/site/bom.txt", 1024);
+    expect(raw.encoding).toBe("utf8-bom");
+    expect(raw.content).toBe("سلام bom!");
+
+    // CRLF: exactly preserved (no silent LF normalization)
+    await ops.runOperation("x", { kind: "writeFile", path: "/site/crlf.txt", content: "line1\r\nline2\r\nline3" });
+    const r2 = await session.readFileToString("/site/crlf.txt", 1024);
+    expect(r2.content).toBe("line1\r\nline2\r\nline3");
+
+    // UTF-16 LE with BOM round-trip
+    await ops.runOperation("x", { kind: "writeFile", path: "/site/u16.txt", content: "wide نویسه", encoding: "utf16le" });
+    const r3 = await session.readFileToString("/site/u16.txt", 1024);
+    expect(r3.encoding).toBe("utf16le");
+    expect(r3.content).toBe("wide نویسه");
+  });
+
   it("ENOENT for missing files", async () => {
     await expect(ops.stat("x", "/definitely/not/here.txt")).rejects.toMatchObject({ code: "ENOENT" });
   });

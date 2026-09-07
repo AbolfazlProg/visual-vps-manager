@@ -116,7 +116,7 @@ export interface DuplicateOp { kind: "duplicate"; paths: string[] }
 export interface ChmodOp { kind: "chmod"; path: string; mode: string; recursive: boolean }
 export interface ChownOp { kind: "chown"; path: string; owner: string; group: string | null; recursive: boolean }
 export interface ReadFileOp { kind: "readFile"; path: string; maxSize: number }
-export interface WriteFileOp { kind: "writeFile"; path: string; content: string; expectedMtime?: number }
+export interface WriteFileOp { kind: "writeFile"; path: string; content: string; expectedMtime?: number; encoding?: import("./encoding").TextEncoding }
 export interface StatOp { kind: "stat"; path: string }
 
 export type FileOperation =
